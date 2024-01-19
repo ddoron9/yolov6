@@ -1,0 +1,9 @@
+
+# whether it is coco dataset, only coco dataset should be set to True.
+is_coco: False
+train: ./hoverboard/images/train
+val: ./hoverboard/images/valid
+test: ./hoverboard/images/test
+
+nc: 13
+names: ['battery', 'batterygard', 'drill', 'electric_board', 'hand', 'hoverboard_base', 'hoverboard_cover_inside', 'hoverboard_cover_outside', 'screw', 'screw_board', 'wheel', 'wire', 'wire_ring']
