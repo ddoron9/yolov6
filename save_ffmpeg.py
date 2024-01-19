@@ -1,0 +1,11 @@
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:01:30 -to 00:01:35 -c copy sample_video/right_pokayoke.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:03:42 -to 00:03:47 -c copy sample_video/right_bolt.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:04:16 -to 00:04:21 -c copy sample_video/left_pokayoke.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:06:39 -to 00:06:44 -c copy sample_video/left_bolt.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:09:34 -to 00:09:39 -c copy sample_video/left_board.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:09:52 -to 00:09:57 -c copy sample_video/battery.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:13:32 -to 00:13:37 -c copy sample_video/batterygard.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:16:15 -to 00:16:20 -c copy sample_video/right_board.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:17:13 -to 00:17:18 -c copy sample_video/cover_zig.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:28:00 -to 00:28:05 -c copy sample_video/cover_bolt.mp4
+ffmpeg -i "/data1/doyi/가이드영상 및 증강 현실 프로그램 제작 자료/1_전동휠 조립 시연 영상 #2.MP4" -ss 00:19:00 -to 00:28:26 -c copy sample_video/cover_조립영상.mp4
