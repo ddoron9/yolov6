@@ -143,7 +143,7 @@ class HoverBoardInspection:
                 for prediction in predictions:
                     class_name = prediction["class"]
                     bounding_box = prediction["bounding_box"]
-                    w, h, _ = prediction["img_size"]
+                    h, w, _ = prediction["img_size"]
 
                     if required_quantity < 0:
                         break
@@ -151,7 +151,7 @@ class HoverBoardInspection:
                     if location == "left":
                         coordinate = [0, 0, (w * 2) // 3, h]
                     elif location == "right":
-                        coordinate = [w // 3, 0, w, h]
+                        coordinate = [w // 2, 0, w, h]
                     else:
                         coordinate = self._get_location_from_class_name(predictions, location)
 
@@ -417,6 +417,6 @@ if __name__ == "__main__":
 
     my_instance = HoverBoardInspection(config=config, checkpoint_path=checkpoint_path)
     # my_instance.connect_server("192.168.37.1", 30000)
-    response = my_instance.execute_inspections(8, "/Users/gimdoi/Downloads/가이드영상 및 증강 현실 프로그램 제작 자료/frame_rate10/8/v5_002638.png")
+    response = my_instance.execute_inspections(3, "/Users/gimdoi/Downloads/가이드영상 및 증강 현실 프로그램 제작 자료/frame_rate10/3/3_3/v5_001152.png")
 
     print(response)
