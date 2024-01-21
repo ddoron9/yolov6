@@ -15,6 +15,8 @@ import os
 import json
 from glob import glob
 from yolov6.data.data_augment import letterbox
+from collections import defaultdict
+from pprint import pprint
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -40,7 +42,7 @@ def process_image(frame, img_size, stride, half):
         return None, None
 
 class HoverBoardInspection:
-    def __init__(self, config, checkpoint_path, label_path = "./data/dataset.yaml", camera_num = 0, success_threshold = 0.2, width = 640, height = 480, inspection_batch = 150, max_duration_seconds = 300, sample_rate = 0.05, **kwargs):
+    def __init__(self, config, checkpoint_path, label_path = "./data/dataset.yaml", camera_num = 0, success_threshold = 0.2, width = 640, height = 480, inspection_batch = 100, max_duration_seconds = 300, sample_rate = 0.03, **kwargs):
         self.config = config
         self.checkpoint_path = checkpoint_path
         self.class_names = load_yaml(label_path)['names']
@@ -60,33 +62,37 @@ class HoverBoardInspection:
         }
 
     def handle_message(self, message):
-        pattern = re.compile(r'^SVT_\d+$')
-        if not pattern.match(message):
-            return -1
+        pattern = re.compile(r'SVT_\d+,?')
+        match = pattern.search(message)
+        filtered_message = match.group() if match else None
 
-        number = int(message.split('_')[1])
+        if filtered_message is None:
+            return -1
+        
+        filtered_message = filtered_message.strip(",")
+
+        number = int(filtered_message.split('_')[1])
         return number
 
-    def start_server(self, host, port):
+    def test_server(self, host, port, process_message="SVT_3"):
         server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_socket.bind((host, port))
-        server_socket.listen(5)
+        server_socket.listen()
         print(f"Server listening on {host}:{port}")
 
-        while True:
-            client_socket, addr = server_socket.accept()
-            print(f"Accepted connection from {addr}")
+        client_socket, addr = server_socket.accept()
+        print(f"Accepted connection from {addr}")
 
-            client_handler = threading.Thread(target=self.handle_client, args=(client_socket,))
-            client_handler.start()
+        client_socket.send(process_message.encode("utf-8"))
+        msg = client_socket.recv(1024)
+        server_socket.close()
+        return msg
 
     def connect_server(self, host, port):
-        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server_socket.connect((host, port))
-        server_socket.send('Hello!'.encode())
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.connect((host, port))
         print(f"connected on {host}:{port}")
-        client_handler = threading.Thread(target=self.handle_client, args=(server_socket,))
-        client_handler.start()
+        self.handle_client(client_socket)
 
     def handle_client(self, client_socket):
         try:
@@ -110,7 +116,8 @@ class HoverBoardInspection:
                                                               max_duration_seconds = self.max_duration_seconds,
                                                               sample_rate = self.sample_rate
                                                             )
-                client_socket.sendall(result.encode("utf-8"))
+
+                client_socket.send(result.encode("utf-8"))
 
         except Exception as e:
             print(f"Error handling client: {e}")
@@ -120,15 +127,16 @@ class HoverBoardInspection:
     
     def execute_inspections(self, num, img_path="path/to/imgs", success_threshold = 0.2):
         parts_info = self.config.get(num, [])
-        total_predictions = self.inference_and_save_images(img_path)
+        total_predictions = self.inference_from_file_system(img_path)
 
         inspection_results = self._execute_inspections(total_predictions, parts_info, num, success_threshold)
 
         return json.dumps(inspection_results)
     
     def _execute_inspections(self, total_predictions, parts_info, num, success_threshold = 0.2):
-        inspection_results = {"success": False, "details": []}
+        inspection_results = {"success": False, "details": str()}
 
+        message_detail = defaultdict(str)
         success_count = 0
         screw_board = None
         ## prediction = {"frame_number": idx, "class": self.class_names[class_num], "probability": conf, "bounding_box": xyxy}
@@ -160,14 +168,14 @@ class HoverBoardInspection:
                             is_within_threshold, bbox_centroid = self.is_bounding_box_within_coordinate(bounding_box, coordinate)
                             if is_within_threshold:
                                 required_quantity -= 1
+                                LOGGER.info(f"{part_name} ({bbox_centroid}) detected! this belongs to {location}")
                                 if part_name == "screw":
                                     screw_positions.append(bbox_centroid)
                                 else:
-                                    message += f"({bbox_centroid}) detected! this belongs to {location}\n"
                                     if class_name == self.screw_boxes[num]:
                                         screw_board = bounding_box
                             else:
-                                LOGGER.info(f"({bbox_centroid}) detected! but {class_name} doesn't belong to current target {location}!")
+                                LOGGER.info(f"{part_name} ({bbox_centroid}) detected! but {class_name} doesn't belong to current target {location}!")
                         else:
                             required_quantity -= 1
                         
@@ -180,21 +188,30 @@ class HoverBoardInspection:
                 screw_positions = []
 
                 if required_quantity <= 0:
-                    print(f"All required {part_name} inspected.")
-                    inspection_results["details"].append({"frame" : prediction["frame_number"], "part_name": part_name, "success": True, "message": message})
+                    if required_quantity == 0:
+                        print(f"All required {part_name} inspected.")
+                    # message_detail[prediction["frame_number"]] +=  f"success:{part_name},"
                 else:
-                    inspection_results["details"].append({"frame" : prediction["frame_number"], "part_name": part_name, "success": False, "message": message})
+                    if part_name == "screw":
+                        message_detail[prediction["frame_number"]] += message
+                    else:
+                        message_detail[prediction["frame_number"]] +=  f"{part_name},"
 
-            
-            success = all(detail["success"] for detail in inspection_results["details"])
-            if success:
+
+            if not "fail" in message_detail[prediction["frame_number"]]:
+                success_index = prediction["frame_number"]
                 success_count += 1
+            else:
+                last_fail = prediction["frame_number"]
 
         if success_count / len(total_predictions) >= success_threshold:
             inspection_results["success"] = True
+            inspection_results["details"] = message_detail[success_index]
+        else:
+            inspection_results["details"] = f"fail:" + message_detail[last_fail]
 
         return inspection_results
-        
+
     def _get_location_from_class_name(self, predictions, location):
 
         if location is None:
@@ -238,7 +255,43 @@ class HoverBoardInspection:
         )
         return center_within_coordinate or corners_within_coordinate, (bbox_center_x, bbox_center_y)
     
-    def inference_and_save_images(self, image_paths):
+    def _inference_frame(self, frame, model, stride, frame_number, save_path=None):
+        predictions = []
+        img, img_src = process_image(frame, img_size, stride, half)
+
+        if img is None:
+            return
+
+        img = img.to(device)
+        if len(img.shape) == 3:
+            img = img[None]
+
+        pred_results = model(img)
+        det = non_max_suppression(pred_results, conf_thres, iou_thres, None, agnostic_nms, max_det=max_det)[0]
+
+        if len(det):
+            det[:, :4] = Inferer.rescale(img.shape[2:], det[:, :4], img_src.shape).round()
+            for *xyxy, conf, cls in reversed(det):
+                class_num = int(cls)
+                label = None if hide_labels else (self.class_names[class_num] if hide_conf else f'{self.class_names[class_num]} {conf:.2f}')
+                Inferer.plot_box_and_label(img_src, 2, xyxy,
+                                            label, color=Inferer.generate_colors(class_num, True))
+                if save_path is not None:
+                    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                    save_path = os.path.join(save_path)
+                    cv2.imwrite(save_path, img_src)
+        
+                prediction = {
+                    "frame_number": frame_number,
+                    "class": self.class_names[class_num],
+                    "probability": conf,
+                    "bounding_box": xyxy,
+                    "img_size": img_src.shape
+                }
+                predictions.append(prediction)
+        return predictions, img_src
+
+    def inference_from_file_system(self, image_paths):
         model = DetectBackend(self.checkpoint_path, device=device)
         stride = model.stride
 
@@ -250,38 +303,12 @@ class HoverBoardInspection:
         total_predictions = []
         for idx, image_path in enumerate(image_paths):
             frame = cv2.imread(image_path)
-            img, img_src = process_image(frame, img_size, stride, half)
-            if img is not None:
-                img = img.to(device)
-                if len(img.shape) == 3:
-                    img = img[None]
-
-                pred_results = model(img)
-                det = non_max_suppression(pred_results, conf_thres, iou_thres, None, agnostic_nms, max_det=max_det)[0]
-
-                if len(det):
-                    det[:, :4] = Inferer.rescale(img.shape[2:], det[:, :4], img_src.shape).round()
-                    predictions = []
-                    for *xyxy, conf, cls in reversed(det):
-                        class_num = int(cls)
-                        label = None if hide_labels else (self.class_names[class_num] if hide_conf else f'{self.class_names[class_num]} {conf:.2f}')
-                        Inferer.plot_box_and_label(img_src, 2, xyxy,
-                                                   label, color=Inferer.generate_colors(class_num, True))
-                        os.makedirs("./tmp", exist_ok=True)
-                        save_path = os.path.join("./tmp", f"{os.path.basename(image_path)}.png")
-                        cv2.imwrite(save_path, img_src)
-                        prediction = {
-                            "frame_number": idx,
-                            "class": self.class_names[class_num],
-                            "probability": conf,
-                            "bounding_box": xyxy,
-                            "img_size": img_src.shape
-                        }
-                        predictions.append(prediction)
-                    total_predictions.append(predictions)
+            predictions, _ = self._inference_frame(frame, model, stride, idx, save_path = f"./tmp/{os.path.basename(image_path)}")
+            if predictions is not None:
+                total_predictions.append(predictions)
         return total_predictions
 
-    def execute_inspections_with_webcam(self, num, camera_num = 0, success_threshold = 0.2, width = 640, height = 480, sample_rate = 0.05, inspection_batch = 150, max_duration_seconds = 300):
+    def execute_inspections_with_webcam(self, num, camera_num = 0, success_threshold = 0.2, width = 640, height = 480, sample_rate = 0.03, inspection_batch = 100, max_duration_seconds = 300):
         parts_info = self.config.get(num, [])
         model = DetectBackend(self.checkpoint_path, device=device)
         stride = model.stride
@@ -293,60 +320,42 @@ class HoverBoardInspection:
 
         total_predictions = []
         frame_number = 0
-
+        inspection_results = {"success": False, "details": ""}
         start_time = time.time()
         while True:
             ret, frame = cap.read()
             if not ret:
+                if frame_number > 0:
+                    frame_number -= 1
                 break
 
-            img, img_src = process_image(frame, img_size, stride, half)
-            if img is not None:
-                img = img.to(device)
-                if len(img.shape) == 3:
-                    img = img[None]
+            predictions, img_src = self._inference_frame(frame, model, stride, frame_number)
+            total_predictions.append(predictions)
 
-                pred_results = model(img)
-                det = non_max_suppression(pred_results, conf_thres, iou_thres, None, agnostic_nms, max_det=max_det)[0]
+            cv2.imshow('Webcam Detection', img_src)
 
-                if len(det):
-                    det[:, :4] = Inferer.rescale(img.shape[2:], det[:, :4], img_src.shape).round()
-                    predictions = []
-                    for *xyxy, conf, cls in reversed(det):
-                        class_num = int(cls)
-                        label = None if hide_labels else (self.class_names[class_num] if hide_conf else f'{self.class_names[class_num]} {conf:.2f}')
-                        Inferer.plot_box_and_label(img_src, 2, xyxy,
-                                                   label, color=Inferer.generate_colors(class_num, True))
-                        prediction = {
-                            "frame_number": frame_number,
-                            "class": self.class_names[class_num],
-                            "probability": conf,
-                            "bounding_box": xyxy,
-                            "img_size": img_src.shape
-                        }
-                        predictions.append(prediction)
-                    total_predictions.append(predictions)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                print(f"break while loop")
+                break
 
-                cv2.imshow('Webcam Detection', img_src)
+            if len(total_predictions) % inspection_batch == 0 and len(total_predictions) > 0:
+                total_predictions = random.sample(total_predictions[:-2], int(inspection_batch * sample_rate)) + total_predictions[:-2]
+                inspection_results = self._execute_inspections(total_predictions, parts_info, num, success_threshold)
 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-
-            if len(total_predictions) % inspection_batch == 0:
-                total_predictions = random.sample(total_predictions, int(inspection_batch * sample_rate))
-                inspection_results = self._execute_inspections(total_predictions, parts_info, success_threshold)
                 total_predictions = []
 
             if inspection_results["success"]:
+                inspection_results["details"] = "success,"
                 break
             if (time.time() - start_time) > max_duration_seconds:
-                inspection_results["details"].append({"frame" : frame_number, "part_name": "", "success": False, "message": f"time limit {max_duration_seconds} second exceeded. increase max_duration_seconds to wait longer."})
+                inspection_results["details"][frame_number] += f"fail:time limit {max_duration_seconds} second exceeded. increase max_duration_seconds to wait longer."
                 break
             frame_number += 1
 
         cap.release()
         cv2.destroyAllWindows()
-        return inspection_results
+        print(f"inspection_results : {inspection_results}")
+        return inspection_results["details"]
 
     @staticmethod
     def classify_screw_positions(screw_positions, screw_board):
@@ -357,27 +366,27 @@ class HoverBoardInspection:
         classifications = set()
 
         for x, y in screw_positions:
-            lr = "left" if x < (screw_board[0] + screw_board[2]) / 2 else "right"
-            tb = "top" if y < (screw_board[1] + screw_board[3]) / 2 else "bottom"
-            classifications.add(f"{lr} {tb}")
+            lr = "l" if x < (screw_board[0] + screw_board[2]) / 2 else "r"
+            tb = "t" if y < (screw_board[1] + screw_board[3]) / 2 else "b"
+            classifications.add(f"{lr}{tb}m")
 
         return classifications
-
 
     def _get_messages_from_screw_coordinate(self, classifications, required_quantity, num):
         if len(classifications) == required_quantity:
             return f"all {required_quantity} screws are inside {self.screw_boxes[num]}"
-        
+
         if required_quantity == 4:
-            screw_positions = {"left top", "right top", "left bottom", "right bottom"}
+            screw_positions = {"ltm", "rtm", "lbm", "rbm"}
         elif required_quantity == 2:
-            screw_positions = {"left top", "right top"}
+            screw_positions = {"ltm", "rtm"}
 
         m = ""
         for p in list(screw_positions - classifications):
-            m += f"{p}, "
-        m = m.strip(", ") + f" {required_quantity - len(classifications)} screws are not in {self.screw_boxes[num]}"
+            m += f"{p},"
+        # m = m.strip(",") + f" {required_quantity - len(classifications)} screws are not in {self.screw_boxes[num]}"
         return m
+
 
 if __name__ == "__main__":
 
@@ -415,8 +424,9 @@ if __name__ == "__main__":
         ],
     }
 
-    my_instance = HoverBoardInspection(config=config, checkpoint_path=checkpoint_path)
-    # my_instance.connect_server("192.168.37.1", 30000)
-    response = my_instance.execute_inspections(3, "/Users/gimdoi/Downloads/가이드영상 및 증강 현실 프로그램 제작 자료/frame_rate10/3/3_3/v5_001152.png")
+    my_instance = HoverBoardInspection(config=config, checkpoint_path=checkpoint_path, camera_num = "/Users/gimdoi/Downloads/가이드영상 및 증강 현실 프로그램 제작 자료/2 챕터 영상 정리/3 바퀴 좌 조립 외+.mp4")
+    msg = my_instance.test_server("127.0.0.1", 10000)
+    print(msg)
+    # response = my_instance.execute_inspections_with_webcam(3, )
 
-    print(response)
+    # pprint(response)
